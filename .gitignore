@@ -2,6 +2,9 @@
 instacart/data/
 instacart/data-raw
 
+# vignette
+instacart/inst/doc
+
 # History files
 .Rhistory
 .Rapp.history
