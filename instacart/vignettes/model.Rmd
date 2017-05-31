@@ -1,0 +1,100 @@
+---
+title: "Instacart Modeling"
+author: "James Kim"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r setup}
+devtools::load_all('~/kaggle/instacart')
+library(data.table)
+library(dplyr)
+library(magrittr)
+```
+
+```{r data}
+data(aisles)
+data(departments)
+data(order_products_prior)
+data(order_products_train)
+data(orders)
+data(products)
+data(sample_submission)
+
+setkey(orders, order_id)
+setkey(order_products_prior, order_id)
+prior_orders <- orders[eval_set == 'prior'][order_products_prior]
+
+setkey(products, product_id)
+setkey(prior_orders, product_id)
+prior_orders <- products[prior_orders]
+
+dataset <- order_products_train %>% 
+  dplyr::left_join(y = orders %>% 
+                     dplyr::select(order_id, user_id) %>% 
+                     unique(), 
+                   by = 'order_id') %>% 
+  dplyr::group_by(user_id, order_id) %>%
+  tidyr::nest() %>%
+  dplyr::mutate(
+    actual_products = purrr::map_chr(
+      data, 
+      ~paste(.x$product_id[.x$reordered == 1], collapse = ' ')
+    ),
+    product_ids = purrr::map2(
+      user_id,
+      data,
+      ~prior_orders[user_id == .x, 'product_id'] %>% 
+        unique() %>%
+        dplyr::left_join(y = .y %>% 
+                           dplyr::select(-add_to_cart_order), 
+                         by = 'product_id') %>%
+        dplyr::mutate(reordered = replace(reordered, is.na(reordered), 0))
+    ),
+    set = 'train'
+  ) %>%
+  rbind(
+    sample_submission %>%
+      dplyr::select(order_id) %>%
+      dplyr::left_join(y = orders %>%
+                         dplyr::select(order_id, user_id) %>%
+                         unique(),
+                       by = 'order_id') %>%
+      dplyr::mutate(
+        data = purrr::map(user_id, ~NULL),
+        actual_products = purrr::map_chr(user_id, ~NA),
+        product_ids = purrr::map(
+          user_id,
+          ~prior_orders[user_id == .x, 'product_id'] %>% unique()
+        ),
+        set = 'test'
+      )
+  )
+```
+
+```{r customer-info}
+cust_df <- prior_orders %>% 
+  dplyr::group_by(user_id) %>% 
+  tidyr::nest() %>% 
+  dplyr::mutate(
+    days = purrr::map_dbl(data, 
+                          ~mean(.x$days_since_prior_order, na.rm = TRUE)), 
+    cart_size = purrr::map_dbl(data, 
+                               ~.x %>% dplyr::count(order_id) %>% .$n %>% mean()), 
+    perc_reorder = purrr::map_dbl(data, 
+                                  ~sum(.x$reordered) / nrow(.x)),
+    perc_department = purrr::map(data,
+                                 ~.x %>% 
+                                   dplyr::count(department_id) %>% 
+                                   dplyr::mutate(perc_order = n / sum(n)) %>% 
+                                   dplyr::left_join(y = departments, 
+                                                    by = 'department_id'))
+  )
+```
+  
+
