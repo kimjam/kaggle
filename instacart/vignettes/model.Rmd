@@ -11,10 +11,11 @@ vignette: >
 
 
 ```{r setup}
-devtools::load_all('~/kaggle/instacart')
+devtools::load_all('.')
 library(data.table)
 library(dplyr)
 library(magrittr)
+library(factoextra)
 ```
 
 ```{r data}
@@ -95,6 +96,22 @@ cust_df <- prior_orders %>%
                                    dplyr::left_join(y = departments, 
                                                     by = 'department_id'))
   )
+
+cust_profile <- cust_df %>% 
+  dplyr::select(user_id, days, cart_size, perc_department) %>% 
+  tidyr::unnest(perc_department) %>%
+  dplyr::select(-department_id, -n) %>% 
+  tidyr::spread(department, perc_order, fill = 0)
+
+clusters <- factoextra::eclust(cust_profile[-1], 'hclust', k = 5,
+                               method = 'ward.D2', graph = FALSE)
+
+grp <- clusters$cluster
+
+centers <- aggregate(cust_profile[-1], list(grp), mean)[-1]
+
+kmeans <- eclust(cust_profile[-1], 'kmeans', k = centers, graph = FALSE)
+fviz_silhouette(kmeans)
 ```
   
 

@@ -86,3 +86,4 @@ target/
 # Pycharm
 *.idea
 *.py___jb_bak___
+.Rproj.user
