@@ -15,7 +15,9 @@ devtools::load_all('.')
 library(data.table)
 library(dplyr)
 library(magrittr)
-library(factoextra)
+library(MASS)
+library(scales)
+library(ggplot2)
 ```
 
 ```{r data}
@@ -124,15 +126,20 @@ cust_profile <- cust_df %>%
   dplyr::select(-department_id, -n) %>% 
   tidyr::spread(department, perc_order, fill = 0)
 
-# clusters <- factoextra::eclust(cust_profile[-1], 'hclust', k = 5,
-#                                method = 'ward.D2', graph = FALSE)
-# 
-# grp <- clusters$cluster
-# 
-# centers <- aggregate(cust_profile[-1], list(grp), mean)[-1]
-# 
-# kmeans <- eclust(cust_profile[-1], 'kmeans', k = centers, graph = FALSE)
-# fviz_silhouette(kmeans)
+cluster <- kmeans(cust_profile[-1], 5)
+
+cust_profile$customer_group = as.factor(cluster$cluster)
+
+lda <- MASS::lda(customer_group ~ ., data = cust_profile[-1])
+plda <- predict(lda, newdata = cust_profile[-1])
+prop.lda <- lda$svd^2 / sum(lda$svd^2)
+
+ggplot(data.frame(customer_group = cust_profile$customer_group,
+                  lda = plda$x)) +
+  geom_point(aes(x = lda.LD1, y = lda.LD2,
+                 color = customer_group), alpha = .5) +
+  labs(x = paste0('LD1 (', scales::percent(prop.lda[1]), ')'),
+       y = paste0('LD2 (', scales::percent(prop.lda[2]), ')'))
 ```
   
 
