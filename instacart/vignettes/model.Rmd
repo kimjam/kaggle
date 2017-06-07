@@ -78,6 +78,25 @@ dataset <- order_products_train %>%
   )
 ```
 
+```{r baseline}
+# for each user in test set, choose products that have been reordered over 50% of the time
+baseline <- cust_df %>%
+  dplyr::select(user_id, data) %>%
+  tidyr::unnest() %>%
+  dplyr::filter(!is.na(reordered)) %>%
+  dplyr::group_by(user_id, product_id) %>%
+  dplyr::summarise(perc_reordered = sum(reordered) / n()) %>%
+  dplyr::group_by(user_id) %>%
+  dplyr::summarise(products = paste(product_id[perc_reordered > .5], 
+                                    collapse = ' ')) %>%
+  dplyr::right_join(y = dataset %>%
+                      dplyr::filter(set == 'test') %>%
+                      dplyr::select(user_id, order_id),
+                    by = 'user_id') %>%
+  dplyr::select(order_id, products) %>%
+  dplyr::arrange(order_id)
+```
+
 ```{r customer-info}
 cust_df <- prior_orders %>% 
   dplyr::group_by(user_id) %>% 
@@ -103,7 +122,6 @@ cust_profile <- cust_df %>%
   dplyr::select(-department_id, -n) %>% 
   tidyr::spread(department, perc_order, fill = 0)
 
-# 158.4 Gb needed?
 # clusters <- factoextra::eclust(cust_profile[-1], 'hclust', k = 5,
 #                                method = 'ward.D2', graph = FALSE)
 # 
