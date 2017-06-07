@@ -81,7 +81,7 @@ dataset <- order_products_train %>%
 ```
 
 ```{r baseline}
-# for each user in test set, choose products that have been reordered over 50% of the time
+# for each user in test set, choose products he / she reordered over 50% of the time
 baseline <- cust_df %>%
   dplyr::select(user_id, data) %>%
   tidyr::unnest() %>%
@@ -124,17 +124,23 @@ cust_profile <- cust_df %>%
   dplyr::select(user_id, days, cart_size, perc_department) %>% 
   tidyr::unnest(perc_department) %>%
   dplyr::select(-department_id, -n) %>% 
-  tidyr::spread(department, perc_order, fill = 0)
+  tidyr::spread(department, perc_order, fill = 0) %>%
+  dplyr::left_join(y = dataset %>%
+                     dplyr::select(user_id, set),
+                   by = 'user_id')
 
-cluster <- kmeans(cust_profile[-1], 5)
+# use customer group as feature or just use entire custoemr profile?
+lda_train <- cust_profile[cust_profile$set == 'train', ]
+lda_test <- cust_profile[cust_profile$set == 'test', ]
+cluster <- kmeans(lda_train[-c(1, 25)], 5)
 
-cust_profile$customer_group = as.factor(cluster$cluster)
+lda_train$customer_group = as.factor(cluster$cluster)
 
-lda <- MASS::lda(customer_group ~ ., data = cust_profile[-1])
-plda <- predict(lda, newdata = cust_profile[-1])
+lda <- MASS::lda(customer_group ~ ., data = lda_train[-c(1, 25)])
+plda <- predict(lda, newdata = lda_test[-c(1, 25)])
 prop.lda <- lda$svd^2 / sum(lda$svd^2)
 
-ggplot(data.frame(customer_group = cust_profile$customer_group,
+ggplot(data.frame(customer_group = plda$class,
                   lda = plda$x)) +
   geom_point(aes(x = lda.LD1, y = lda.LD2,
                  color = customer_group), alpha = .5) +
@@ -142,4 +148,22 @@ ggplot(data.frame(customer_group = cust_profile$customer_group,
        y = paste0('LD2 (', scales::percent(prop.lda[2]), ')'))
 ```
   
+```{r product-info}
+tmp <- cust_df %>%
+  dplyr::select(user_id, data) %>%
+  tidyr::unnest(data)
 
+# particular user's behavior for a particual product
+user_prod <- tmp %>%
+  dplyr::group_by(user_id, product_id) %>%
+  dplyr::summarise()
+
+# product features, population use training set only
+prod_df <- tmp %>%
+  dplyr::left_join(y = dataset %>%
+                     dplyr::select(user_id, set),
+                   by = 'user_id') %>%
+  dplyr::filter(set == 'train') %>%
+  dplyr::group_by(product_id) %>%
+  dplyr::summarise()
+```
