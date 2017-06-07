@@ -103,15 +103,16 @@ cust_profile <- cust_df %>%
   dplyr::select(-department_id, -n) %>% 
   tidyr::spread(department, perc_order, fill = 0)
 
-clusters <- factoextra::eclust(cust_profile[-1], 'hclust', k = 5,
-                               method = 'ward.D2', graph = FALSE)
-
-grp <- clusters$cluster
-
-centers <- aggregate(cust_profile[-1], list(grp), mean)[-1]
-
-kmeans <- eclust(cust_profile[-1], 'kmeans', k = centers, graph = FALSE)
-fviz_silhouette(kmeans)
+# 158.4 Gb needed?
+# clusters <- factoextra::eclust(cust_profile[-1], 'hclust', k = 5,
+#                                method = 'ward.D2', graph = FALSE)
+# 
+# grp <- clusters$cluster
+# 
+# centers <- aggregate(cust_profile[-1], list(grp), mean)[-1]
+# 
+# kmeans <- eclust(cust_profile[-1], 'kmeans', k = centers, graph = FALSE)
+# fviz_silhouette(kmeans)
 ```
   
 
