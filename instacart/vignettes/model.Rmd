@@ -95,6 +95,8 @@ baseline <- cust_df %>%
                     by = 'user_id') %>%
   dplyr::select(order_id, products) %>%
   dplyr::arrange(order_id)
+
+# f score of .3110698
 ```
 
 ```{r customer-info}
