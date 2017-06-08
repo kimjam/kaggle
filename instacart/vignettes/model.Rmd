@@ -84,6 +84,25 @@ sample_submission %<>%
                      dplyr::filter(set == 'test') %>%
                      dplyr::select(user_id, order_id),
                    by = 'order_id')
+
+dependent_info <- orders %>% 
+  dplyr::group_by(user_id) %>% 
+  tidyr::nest() %>% 
+  dplyr::mutate(
+    order_id = purrr::map_int(
+      data, 
+      ~.x$order_id[.x$order_number == max(.x$order_number)]
+    ), 
+    days_since_prior_order = purrr::map_dbl(
+      data, 
+      ~.x$days_since_prior_order[.x$order_number == max(.x$order_number)]
+    ), 
+    eval_set = purrr::map_chr(
+      data, 
+      ~.x$eval_set[.x$order_number == max(.x$order_number)]
+    )
+  ) %>% 
+  dplyr::select(-data)
 ```
 
 ```{r baseline}
@@ -112,8 +131,8 @@ cust_df <- prior_orders %>%
   dplyr::group_by(user_id) %>% 
   tidyr::nest() %>% 
   dplyr::mutate(
-    days = purrr::map_dbl(data, 
-                          ~mean(.x$days_since_prior_order, na.rm = TRUE)), 
+    user_order_freq = purrr::map_dbl(data, 
+                                     ~mean(.x$days_since_prior_order, na.rm = TRUE)), 
     cart_size = purrr::map_dbl(data, 
                                ~.x %>% dplyr::count(order_id) %>% .$n %>% mean()), 
     perc_reorder = purrr::map_dbl(data, 
@@ -153,6 +172,10 @@ ggplot(data.frame(customer_group = plda$class,
                  color = customer_group), alpha = .5) +
   labs(x = paste0('LD1 (', scales::percent(prop.lda[1]), ')'),
        y = paste0('LD2 (', scales::percent(prop.lda[2]), ')'))
+
+plda <- predict(lda, newdata = cust_profile[set])
+
+cust_profile$customer_group <- plda$class
 ```
   
 ```{r product-info}
@@ -196,7 +219,15 @@ aisle_df <- tmp %>%
 ```
 
 ```{r model-df}
-model_df <- dataset[1:5] %>%
+model_df <- dataset[1:5, ] %>%
   dplyr::select(user_id, data) %>%
-  tidyr::unnest()
+  tidyr::unnest() %>%
+  dplyr::left_join(y = cust_profile %>%
+                     dplyr::select(user_id, user_order_freq, cart_size, 
+                                   perc_reorder, customer_group),
+                   by = 'user_id') %>%
+  dplyr::left_join(y = products %>% dplyr::select(-product_name),
+                   by = 'product_id') %>%
+  dplyr::left_join(y = orders %>% dplyr::select(order_id, days_since_prior_order),
+                   by = 'order_id')
 ```
