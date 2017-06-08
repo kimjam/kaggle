@@ -187,15 +187,15 @@ cluster <- kmeans(lda_train[set], 5)
 lda_train$customer_group = as.factor(cluster$cluster)
 
 lda <- MASS::lda(customer_group ~ ., data = lda_train[c(set, ncol(lda_train))])
-plda <- predict(lda, newdata = lda_test[set])
-prop.lda <- lda$svd^2 / sum(lda$svd^2)
-
-ggplot(data.frame(customer_group = plda$class,
-                  lda = plda$x)) +
-  geom_point(aes(x = lda.LD1, y = lda.LD2,
-                 color = customer_group), alpha = .5) +
-  labs(x = paste0('LD1 (', scales::percent(prop.lda[1]), ')'),
-       y = paste0('LD2 (', scales::percent(prop.lda[2]), ')'))
+# plda <- predict(lda, newdata = lda_test[set])
+# prop.lda <- lda$svd^2 / sum(lda$svd^2)
+# 
+# ggplot(data.frame(customer_group = plda$class,
+#                   lda = plda$x)) +
+#   geom_point(aes(x = lda.LD1, y = lda.LD2,
+#                  color = customer_group), alpha = .5) +
+#   labs(x = paste0('LD1 (', scales::percent(prop.lda[1]), ')'),
+#        y = paste0('LD2 (', scales::percent(prop.lda[2]), ')'))
 
 plda <- predict(lda, newdata = cust_profile[set])
 
@@ -263,4 +263,19 @@ model_df <- dataset %>%
                 customer_group = as.factor(customer_group),
                 aisle_id = as.factor(aisle_id),
                 deparment_id = as.factor(department_id))
+```
+
+```{r logistic}
+logit <- cv.glmnet(
+  x = data.matrix(model_df %>%
+                    dplyr::filter(set == 'train',
+                                  !is.na(prod_avg_days_reordered)) %>%
+                    dplyr::select(-user_id, -set, -reordered)),
+  y = model_df %>%
+    dplyr::filter(set == 'train',
+                  !is.na(prod_avg_days_reordered)) %>%
+    .$reordered,
+  family = 'binomial',
+  alpha = .5
+)
 ```
