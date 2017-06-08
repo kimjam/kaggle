@@ -78,6 +78,12 @@ dataset <- order_products_train %>%
         set = 'test'
       )
   )
+
+sample_submission %<>%
+  dplyr::left_join(y = dataset %>% 
+                     dplyr::filter(set == 'test') %>%
+                     dplyr::select(user_id, order_id),
+                   by = 'order_id')
 ```
 
 ```{r baseline}
@@ -121,7 +127,7 @@ cust_df <- prior_orders %>%
   )
 
 cust_profile <- cust_df %>% 
-  dplyr::select(user_id, days, cart_size, perc_department) %>% 
+  dplyr::select(user_id, days, cart_size, perc_reordered, perc_department) %>% 
   tidyr::unnest(perc_department) %>%
   dplyr::select(-department_id, -n) %>% 
   tidyr::spread(department, perc_order, fill = 0) %>%
@@ -132,12 +138,13 @@ cust_profile <- cust_df %>%
 # use customer group as feature or just use entire custoemr profile?
 lda_train <- cust_profile[cust_profile$set == 'train', ]
 lda_test <- cust_profile[cust_profile$set == 'test', ]
-cluster <- kmeans(lda_train[-c(1, 25)], 5)
+set <- 2:4
+cluster <- kmeans(lda_train[set], 5)
 
 lda_train$customer_group = as.factor(cluster$cluster)
 
-lda <- MASS::lda(customer_group ~ ., data = lda_train[-c(1, 25)])
-plda <- predict(lda, newdata = lda_test[-c(1, 25)])
+lda <- MASS::lda(customer_group ~ ., data = lda_train[c(set, ncol(lda_train))])
+plda <- predict(lda, newdata = lda_test[set])
 prop.lda <- lda$svd^2 / sum(lda$svd^2)
 
 ggplot(data.frame(customer_group = plda$class,
@@ -156,7 +163,8 @@ tmp <- cust_df %>%
 # particular user's behavior for a particual product
 user_prod <- tmp %>%
   dplyr::group_by(user_id, product_id) %>%
-  dplyr::summarise()
+  dplyr::summarise(user_prod_avg_days_reordered = mean(days_since_prior_order[reorder == 1]),
+                   user_prod_reordered_perc = sum(reordered) / n())
 
 # product features, population use training set only
 prod_df <- tmp %>%
@@ -165,5 +173,30 @@ prod_df <- tmp %>%
                    by = 'user_id') %>%
   dplyr::filter(set == 'train') %>%
   dplyr::group_by(product_id) %>%
-  dplyr::summarise()
+  dplyr::summarise(prod_avg_days_reordered = mean(days_since_prior_order[reorder == 1]),
+                   prod_reordered_perc = sum(reordered) / n())
+
+department_df <- tmp %>%
+  dplyr::left_join(y = dataset %>%
+                     dplyr::select(user_id, set),
+                   by = 'user_id') %>%
+  dplyr::filter(set == 'train') %>%
+  dplyr::group_by(department_id) %>%
+  dplyr::summarise(department_avg_days_reordered = mean(days_since_prior_order[reorder == 1]),
+                   department_reordered_perc = sum(reordered) / n())
+
+aisle_df <- tmp %>%
+  dplyr::left_join(y = dataset %>%
+                     dplyr::select(user_id, set),
+                   by = 'user_id') %>%
+  dplyr::filter(set == 'train') %>%
+  dplyr::group_by(aisle_id) %>%
+  dplyr::summarise(aisle_avg_days_reordered = mean(days_since_prior_order[reorder == 1]),
+                   aisle_reordered_perc = sum(reordered) / n())
+```
+
+```{r model-df}
+model_df <- dataset[1:5] %>%
+  dplyr::select(user_id, data) %>%
+  tidyr::unnest()
 ```
