@@ -127,7 +127,7 @@ cust_df <- prior_orders %>%
   )
 
 cust_profile <- cust_df %>% 
-  dplyr::select(user_id, days, cart_size, perc_reordered, perc_department) %>% 
+  dplyr::select(user_id, days, cart_size, perc_reorder, perc_department) %>% 
   tidyr::unnest(perc_department) %>%
   dplyr::select(-department_id, -n) %>% 
   tidyr::spread(department, perc_order, fill = 0) %>%
@@ -163,7 +163,7 @@ tmp <- cust_df %>%
 # particular user's behavior for a particual product
 user_prod <- tmp %>%
   dplyr::group_by(user_id, product_id) %>%
-  dplyr::summarise(user_prod_avg_days_reordered = mean(days_since_prior_order[reorder == 1]),
+  dplyr::summarise(user_prod_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
                    user_prod_reordered_perc = sum(reordered) / n())
 
 # product features, population use training set only
@@ -173,7 +173,7 @@ prod_df <- tmp %>%
                    by = 'user_id') %>%
   dplyr::filter(set == 'train') %>%
   dplyr::group_by(product_id) %>%
-  dplyr::summarise(prod_avg_days_reordered = mean(days_since_prior_order[reorder == 1]),
+  dplyr::summarise(prod_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
                    prod_reordered_perc = sum(reordered) / n())
 
 department_df <- tmp %>%
@@ -182,7 +182,7 @@ department_df <- tmp %>%
                    by = 'user_id') %>%
   dplyr::filter(set == 'train') %>%
   dplyr::group_by(department_id) %>%
-  dplyr::summarise(department_avg_days_reordered = mean(days_since_prior_order[reorder == 1]),
+  dplyr::summarise(department_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
                    department_reordered_perc = sum(reordered) / n())
 
 aisle_df <- tmp %>%
@@ -191,7 +191,7 @@ aisle_df <- tmp %>%
                    by = 'user_id') %>%
   dplyr::filter(set == 'train') %>%
   dplyr::group_by(aisle_id) %>%
-  dplyr::summarise(aisle_avg_days_reordered = mean(days_since_prior_order[reorder == 1]),
+  dplyr::summarise(aisle_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
                    aisle_reordered_perc = sum(reordered) / n())
 ```
 
