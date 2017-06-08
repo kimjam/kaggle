@@ -20,6 +20,24 @@ library(scales)
 library(ggplot2)
 ```
 
+```{r utils}
+# based on https://github.com/benhamner/Metrics/blob/master/R/R/metrics.r
+f1 <- function (actual, predicted) {
+  act <- as.character(strsplit(actual, ' ')[[1]])
+  pred <- as.character(strsplit(predicted, ' ')[[1]])
+  
+  tp <- length(intersect(act,pred))
+  fp <- length(setdiff(pred,act))
+  fn <- length(setdiff(act,pred))
+  
+  precision <- ifelse ((tp==0 & fp==0), 0, tp/(tp+fp))
+  recall <- ifelse ((tp==0 & fn==0), 0, tp/(tp+fn))
+  
+  score <- ifelse ((precision==0 & recall==0), 0, 2*precision*recall/(precision+recall))
+  return(score)
+}
+```
+
 ```{r data}
 data(aisles)
 data(departments)
@@ -73,11 +91,16 @@ dataset <- order_products_train %>%
         actual_products = purrr::map_chr(user_id, ~NA),
         product_ids = purrr::map(
           user_id,
-          ~prior_orders[user_id == .x, 'product_id'] %>% unique()
+          ~prior_orders[user_id == .x, 'product_id'] %>% 
+            unique() %>%
+            dplyr::mutate(reordered = NA)
         ),
         set = 'test'
       )
-  )
+  ) %>%
+  dplyr::mutate(actual_products = replace(actual_products,
+                                          actual_products == '',
+                                          'None'))
 
 sample_submission %<>%
   dplyr::left_join(y = dataset %>% 
@@ -135,7 +158,7 @@ cust_df <- prior_orders %>%
                                      ~mean(.x$days_since_prior_order, na.rm = TRUE)), 
     cart_size = purrr::map_dbl(data, 
                                ~.x %>% dplyr::count(order_id) %>% .$n %>% mean()), 
-    perc_reorder = purrr::map_dbl(data, 
+    user_perc_reorder = purrr::map_dbl(data, 
                                   ~sum(.x$reordered) / nrow(.x)),
     perc_department = purrr::map(data,
                                  ~.x %>% 
@@ -146,7 +169,8 @@ cust_df <- prior_orders %>%
   )
 
 cust_profile <- cust_df %>% 
-  dplyr::select(user_id, days, cart_size, perc_reorder, perc_department) %>% 
+  dplyr::select(user_id, user_order_freq, cart_size, 
+                user_perc_reorder, perc_department) %>% 
   tidyr::unnest(perc_department) %>%
   dplyr::select(-department_id, -n) %>% 
   tidyr::spread(department, perc_order, fill = 0) %>%
@@ -219,15 +243,24 @@ aisle_df <- tmp %>%
 ```
 
 ```{r model-df}
-model_df <- dataset[1:5, ] %>%
-  dplyr::select(user_id, data) %>%
+model_df <- dataset %>%
+  dplyr::select(user_id, set, product_ids) %>%
   tidyr::unnest() %>%
   dplyr::left_join(y = cust_profile %>%
                      dplyr::select(user_id, user_order_freq, cart_size, 
-                                   perc_reorder, customer_group),
+                                   user_perc_reorder, customer_group),
                    by = 'user_id') %>%
   dplyr::left_join(y = products %>% dplyr::select(-product_name),
                    by = 'product_id') %>%
-  dplyr::left_join(y = orders %>% dplyr::select(order_id, days_since_prior_order),
-                   by = 'order_id')
+  dplyr::left_join(y = dependent_info %>% dplyr::select(-eval_set),
+                   by = 'user_id') %>%
+  dplyr::left_join(y = department_df, by = 'department_id') %>%
+  dplyr::left_join(y = aisle_df, by = 'aisle_id') %>%
+  dplyr::left_join(y = prod_df, by = 'product_id') %>%
+  # mutate_at with dplyr::ends_with('id') not working?
+  dplyr::mutate(reordered = as.factor(reordered),
+                product_id = as.factor(product_id),
+                customer_group = as.factor(customer_group),
+                aisle_id = as.factor(aisle_id),
+                deparment_id = as.factor(department_id))
 ```
