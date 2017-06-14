@@ -210,8 +210,11 @@ tmp <- cust_df %>%
 # particular user's behavior for a particual product
 user_prod <- tmp %>%
   dplyr::group_by(user_id, product_id) %>%
-  dplyr::summarise(user_prod_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
-                   user_prod_reordered_perc = sum(reordered) / n())
+  dplyr::summarise(
+    user_prod_orders = n(),
+    user_prod_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
+    user_prod_reordered_perc = sum(reordered) / n()
+  )
 
 # product features, population use training set only
 prod_df <- tmp %>%
@@ -220,8 +223,11 @@ prod_df <- tmp %>%
                    by = 'user_id') %>%
   dplyr::filter(set == 'train') %>%
   dplyr::group_by(product_id) %>%
-  dplyr::summarise(prod_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
-                   prod_reordered_perc = sum(reordered) / n())
+  dplyr::summarise(
+    prod_orders = n(),
+    prod_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
+    prod_reordered_perc = sum(reordered) / n()
+  )
 
 department_df <- tmp %>%
   dplyr::left_join(y = dataset %>%
@@ -229,8 +235,11 @@ department_df <- tmp %>%
                    by = 'user_id') %>%
   dplyr::filter(set == 'train') %>%
   dplyr::group_by(department_id) %>%
-  dplyr::summarise(department_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
-                   department_reordered_perc = sum(reordered) / n())
+  dplyr::summarise(
+    department_orders = n(),
+    department_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
+    department_reordered_perc = sum(reordered) / n()
+  )
 
 aisle_df <- tmp %>%
   dplyr::left_join(y = dataset %>%
@@ -238,8 +247,11 @@ aisle_df <- tmp %>%
                    by = 'user_id') %>%
   dplyr::filter(set == 'train') %>%
   dplyr::group_by(aisle_id) %>%
-  dplyr::summarise(aisle_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
-                   aisle_reordered_perc = sum(reordered) / n())
+  dplyr::summarise(
+    aisle_orders = n(),
+    aisle_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
+    aisle_reordered_perc = sum(reordered) / n()
+  )
 ```
 
 ```{r model-df}
@@ -249,6 +261,8 @@ model_df <- dataset %>%
   dplyr::left_join(y = cust_profile %>%
                      dplyr::select(user_id, user_order_freq, cart_size, 
                                    user_perc_reorder, customer_group),
+                   by = 'user_id') %>%
+  dplyr::left_join(y = user_prod,
                    by = 'user_id') %>%
   dplyr::left_join(y = products %>% dplyr::select(-product_name),
                    by = 'product_id') %>%
