@@ -295,7 +295,7 @@ x <- Matrix::cBind(
   )
 )
 
-colnames(x)[12:16] <- paste0('cust_group', 1:5)
+colnames(x)[(ncol(x)-4):ncol(x)] <- paste0('cust_group', 1:5)
 
 y <- model_df$reordered[model_df$set == 'train' & !is.na(model_df$prod_avg_days_reordered) & !is.na(model_df$reordered)]
 
@@ -325,7 +325,7 @@ newx <- Matrix::cBind(
   )
 )
 
-colnames(newx)[12:16] <- paste0('cust_group', 1:5)
+colnames(newx)[(ncol(newx)-4):ncol(newx)] <- paste0('cust_group', 1:5)
 preds <- predict(logit, s = .01, newx = newx, type = 'response')
 
 logit_preds <- model_df %>%
@@ -336,7 +336,88 @@ logit_preds <- model_df %>%
                 take = preds >= .1) %>%
   dplyr::group_by(order_id) %>%
   dplyr::summarise(products = paste(product_id[take], collapse = ' ')) %>%
-  dplyr::right_join(y = sample_submission$order_id,
+  dplyr::right_join(y = sample_submission %>% dplyr::select(-products),
+                    by = 'order_id') %>%
+  dplyr::mutate(products = replace(products, products == '', 'None'))
+```
+
+
+```{r xgboost}
+# 0.2363427
+library(xgboost)
+library(DiagrammeR)
+
+pos <- model_df %>%
+  dplyr::filter(set == 'train', 
+                !is.na(prod_avg_days_reordered),
+                reordered == 1)
+
+neg <- model_df %>%
+  dplyr::filter(set == 'train', 
+                !is.na(prod_avg_days_reordered),
+                reordered == 0) %>%
+  .[sample(1:nrow(.), nrow(pos) * 1.5), ]
+
+train <- rbind(pos, neg)
+
+x <-  data.matrix(train %>%
+                    dplyr::select(-user_id, -set, -product_id, -aisle_id, 
+                                  -department_id, -reordered, -order_id,
+                                  -customer_group))
+
+x <- Matrix::cBind(
+  x, 
+  Matrix::sparse.model.matrix(
+    ~train$customer_group - 1
+  )
+)
+
+colnames(x)[(ncol(x)-4):ncol(x)] <- paste0('cust_group', 1:5)
+
+y <- as.numeric(as.character(train$reordered))
+
+bst <- xgboost(data = x, label = y, 
+               objective = 'binary:logistic', nround = 10)
+
+preds <- predict(bst, x)
+
+bst_preds <- train %>%
+  dplyr::mutate(preds = preds) %>%
+  dplyr::group_by(order_id) %>%
+  dplyr::summarise(products = paste(product_id[preds > .5], collapse = ' ')) %>%
+  dplyr::mutate(products = replace(products, products == '', 'None')) %>%
+  dplyr::left_join(dataset %>% dplyr::select(order_id, actual_products),
+                   by = 'order_id')
+
+mean_f1 <- mean(apply(bst_preds, 1, function(x) f1(x[3], x[2])))
+
+newx <- data.matrix(
+  model_df %>% 
+    dplyr::filter(set == 'test', 
+                  !is.na(prod_avg_days_reordered)) %>% 
+    dplyr::select(-user_id, -set, -product_id, -aisle_id, 
+                  -department_id, -reordered, -order_id,
+                  -customer_group)
+)
+
+newx <- Matrix::cBind(
+  newx, 
+  Matrix::sparse.model.matrix(
+    ~model_df$customer_group[model_df$set == 'test' & !is.na(model_df$prod_avg_days_reordered)] - 1
+  )
+)
+
+colnames(newx)[(ncol(newx)-4):ncol(newx)] <- paste0('cust_group', 1:5)
+
+preds <- predict(bst, newx)
+bst_preds <- model_df %>%
+  dplyr::filter(set == 'test',
+                !is.na(prod_avg_days_reordered)) %>%
+  dplyr::select(order_id, product_id) %>%
+  dplyr::mutate(preds = preds > .5) %>%
+  dplyr::group_by(order_id) %>%
+  dplyr::summarise(products = paste(product_id[preds], collapse = ' ')) %>%
+  dplyr::right_join(y = sample_submission %>% dplyr::select(-products),
                     by = 'order_id') %>%
   dplyr::mutate(products = replace(products, products == '', 'None'))
 ```
