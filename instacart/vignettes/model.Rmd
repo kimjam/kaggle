@@ -36,6 +36,20 @@ f1 <- function (actual, predicted) {
   score <- ifelse ((precision==0 & recall==0), 0, 2*precision*recall/(precision+recall))
   return(score)
 }
+
+evalerror <- function(preds, dtrain) {
+  labels <- as.numeric(getinfo(dtrain, 'label'))
+  preds <- as.numeric(preds > .5)
+  tp <- sum(preds[labels == 1] == 1)
+  fp <- sum(preds[labels == 0] == 1)
+  fn <- sum(preds[labels == 1] == 0)
+  
+  precision <- ifelse((tp == 0 & fp == 0), 0, tp / (tp + fp))
+  recall <- ifelse((tp == 0 & fn == 0), 0, tp / (tp + fn))
+  
+  score <- ifelse((precision == 0 & recall == 0), 0, 2 * precision * recall / (precision + recall))
+  return(list(metric = 'f1', value = score))
+}
 ```
 
 ```{r data}
@@ -263,7 +277,7 @@ model_df <- dataset %>%
                                    user_perc_reorder, customer_group),
                    by = 'user_id') %>%
   dplyr::left_join(y = user_prod,
-                   by = 'user_id') %>%
+                   by = c('user_id', 'product_id')) %>%
   dplyr::left_join(y = products %>% dplyr::select(-product_name),
                    by = 'product_id') %>%
   dplyr::left_join(y = dependent_info %>% dplyr::select(-eval_set),
@@ -276,7 +290,11 @@ model_df <- dataset %>%
                 product_id = as.factor(product_id),
                 customer_group = as.factor(customer_group),
                 aisle_id = as.factor(aisle_id),
-                department_id = as.factor(department_id))
+                department_id = as.factor(department_id),
+                user_diff = days_since_prior_order - user_order_freq,
+                prod_diff = days_since_prior_order - prod_avg_days_reordered,
+                department_diff = days_since_prior_order - department_avg_days_reordered,
+                aisle_diff = days_since_prior_order - aisle_avg_days_reordered)
 ```
 
 ```{r logistic}
@@ -357,20 +375,17 @@ logit_preds <- model_df %>%
 
 
 ```{r xgboost}
-# 0.2363427
+# 0.3338959
 library(xgboost)
-library(DiagrammeR)
 
 pos <- model_df %>%
-  dplyr::filter(set == 'train', 
-                !is.na(prod_avg_days_reordered),
+  dplyr::filter(set == 'train',
                 reordered == 1)
 
 neg <- model_df %>%
-  dplyr::filter(set == 'train', 
-                !is.na(prod_avg_days_reordered),
+  dplyr::filter(set == 'train',
                 reordered == 0) %>%
-  .[sample(1:nrow(.), nrow(pos) * 1.5), ]
+  dplyr::sample_n(nrow(pos) * 2)
 
 train <- rbind(pos, neg)
 
@@ -379,21 +394,22 @@ x <-  data.matrix(train %>%
                                   -department_id, -reordered, -order_id,
                                   -customer_group))
 
-x <- Matrix::cBind(
-  x, 
-  Matrix::sparse.model.matrix(
-    ~train$customer_group - 1
-  )
-)
-
-colnames(x)[(ncol(x)-4):ncol(x)] <- paste0('cust_group', 1:5)
-
 y <- as.numeric(as.character(train$reordered))
 
-bst <- xgboost(data = x, label = y, 
-               objective = 'binary:logistic', nround = 10)
+X <- xgb.DMatrix(x, label = y)
 
-preds <- predict(bst, x)
+params <- list('objective' = 'binary:logistic', 'eta' = .1, 
+               'max_depth' = 6, 'min_child_weight' = 10, 'gamma' = .7,
+               'subsample' = .76, 'colsample_bytreee' = .95, 
+               'alpha' = 2e-5, 'lambda' = 10, 'maximize' = TRUE)
+
+# bst <- xgb.cv(data = X, params = params, 
+#               feval = evalerror, nrounds = 20, nfold = 5)
+
+bst <- xgboost(data = X, params = params, 
+               feval = evalerror, nrounds = 20)
+
+preds <- predict(bst, X)
 
 bst_preds <- train %>%
   dplyr::mutate(preds = preds) %>%
@@ -407,26 +423,17 @@ mean_f1 <- mean(apply(bst_preds, 1, function(x) f1(x[3], x[2])))
 
 newx <- data.matrix(
   model_df %>% 
-    dplyr::filter(set == 'test', 
-                  !is.na(prod_avg_days_reordered)) %>% 
+    dplyr::filter(set == 'test') %>% 
     dplyr::select(-user_id, -set, -product_id, -aisle_id, 
                   -department_id, -reordered, -order_id,
                   -customer_group)
 )
 
-newx <- Matrix::cBind(
-  newx, 
-  Matrix::sparse.model.matrix(
-    ~model_df$customer_group[model_df$set == 'test' & !is.na(model_df$prod_avg_days_reordered)] - 1
-  )
-)
-
-colnames(newx)[(ncol(newx)-4):ncol(newx)] <- paste0('cust_group', 1:5)
+newx <- xgb.DMatrix(newx)
 
 preds <- predict(bst, newx)
 bst_preds <- model_df %>%
-  dplyr::filter(set == 'test',
-                !is.na(prod_avg_days_reordered)) %>%
+  dplyr::filter(set == 'test') %>%
   dplyr::select(order_id, product_id) %>%
   dplyr::mutate(preds = preds > .5) %>%
   dplyr::group_by(order_id) %>%
