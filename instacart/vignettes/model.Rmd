@@ -133,7 +133,15 @@ dependent_info <- orders %>%
     days_since_prior_order = purrr::map_dbl(
       data, 
       ~.x$days_since_prior_order[.x$order_number == max(.x$order_number)]
-    ), 
+    ),
+    order_dow = purrr::map_dbl(
+      data,
+      ~.x$order_dow[.x$order_number == max(.x$order_number)]
+    ),
+    order_hour_of_day = purrr::map_dbl(
+      data,
+      ~.x$order_hour_of_day[.x$order_number == max(.x$order_number)]
+    ),
     eval_set = purrr::map_chr(
       data, 
       ~.x$eval_set[.x$order_number == max(.x$order_number)]
@@ -169,7 +177,11 @@ cust_df <- prior_orders %>%
   tidyr::nest() %>% 
   dplyr::mutate(
     user_order_freq = purrr::map_dbl(data, 
-                                     ~mean(.x$days_since_prior_order, na.rm = TRUE)), 
+                                     ~mean(.x$days_since_prior_order, na.rm = TRUE)),
+    user_dow = purrr::map_dbl(data,
+                              ~mean(.x$order_dow, na.rm = TRUE)),
+    user_hour = purrr::map_dbl(data,
+                               ~mean(.x$order_hour_of_day, na.rm = TRUE)),
     cart_size = purrr::map_dbl(data, 
                                ~.x %>% dplyr::count(order_id) %>% .$n %>% mean()), 
     user_perc_reorder = purrr::map_dbl(data, 
@@ -183,7 +195,8 @@ cust_df <- prior_orders %>%
   )
 
 cust_profile <- cust_df %>% 
-  dplyr::select(user_id, user_order_freq, cart_size, 
+  dplyr::select(user_id, user_order_freq, user_dow,
+                user_hour, cart_size, 
                 user_perc_reorder, perc_department) %>% 
   tidyr::unnest(perc_department) %>%
   dplyr::select(-department_id, -n) %>% 
@@ -227,7 +240,9 @@ user_prod <- tmp %>%
   dplyr::summarise(
     user_prod_orders = n(),
     user_prod_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
-    user_prod_reordered_perc = sum(reordered) / n()
+    user_prod_reordered_perc = sum(reordered) / n(),
+    user_prod_dow_reordered = mean(order_dow[reordered == 0]),
+    user_prod_hour_reordered = mean(order_hour_of_day[reordered == 1])
   )
 
 # product features, population use training set only
@@ -240,6 +255,8 @@ prod_df <- tmp %>%
   dplyr::summarise(
     prod_orders = n(),
     prod_avg_days_reordered = mean(days_since_prior_order[reordered == 1]),
+    prod_dow_reordered = mean(order_dow[reordered == 1]),
+    prod_hour_reordered = mean(order_hour_of_day[reordered == 1]),
     prod_reordered_perc = sum(reordered) / n()
   )
 
@@ -291,8 +308,12 @@ model_df <- dataset %>%
                 customer_group = as.factor(customer_group),
                 aisle_id = as.factor(aisle_id),
                 department_id = as.factor(department_id),
-                user_diff = days_since_prior_order - user_order_freq,
-                prod_diff = days_since_prior_order - prod_avg_days_reordered,
+                user_diff_days = days_since_prior_order - user_order_freq,
+                user_diff_dow = order_dow - user_dow,
+                user_diff_hour = order_hour_of_day - user_hour,
+                prod_diff_days = days_since_prior_order - prod_avg_days_reordered,
+                prod_diff_dow = order_dow - prod_dow_reordered, 
+                prod_diff_hour = order_hour_of_day - prod_hour_reordered,
                 department_diff = days_since_prior_order - department_avg_days_reordered,
                 aisle_diff = days_since_prior_order - aisle_avg_days_reordered)
 ```
