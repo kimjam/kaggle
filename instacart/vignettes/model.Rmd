@@ -36,20 +36,6 @@ f1 <- function (actual, predicted) {
   score <- ifelse ((precision==0 & recall==0), 0, 2*precision*recall/(precision+recall))
   return(score)
 }
-
-evalerror <- function(preds, dtrain) {
-  labels <- as.numeric(getinfo(dtrain, 'label'))
-  preds <- as.numeric(preds > .5)
-  tp <- sum(preds[labels == 1] == 1)
-  fp <- sum(preds[labels == 0] == 1)
-  fn <- sum(preds[labels == 1] == 0)
-  
-  precision <- ifelse((tp == 0 & fp == 0), 0, tp / (tp + fp))
-  recall <- ifelse((tp == 0 & fn == 0), 0, tp / (tp + fn))
-  
-  score <- ifelse((precision == 0 & recall == 0), 0, 2 * precision * recall / (precision + recall))
-  return(list(metric = 'f1', value = score))
-}
 ```
 
 ```{r data}
@@ -397,40 +383,72 @@ logit_preds <- model_df %>%
 ```{r xgboost}
 # 0.3338959
 library(xgboost)
+library(caTools)
 
-pos <- model_df %>%
-  dplyr::filter(set == 'train',
-                reordered == 1)
+# pos <- model_df %>%
+#   dplyr::filter(set == 'train',
+#                 reordered == 1)
+# 
+# neg <- model_df %>%
+#   dplyr::filter(set == 'train',
+#                 reordered == 0) %>%
+#   dplyr::sample_n(nrow(pos) * 2)
 
-neg <- model_df %>%
-  dplyr::filter(set == 'train',
-                reordered == 0) %>%
-  dplyr::sample_n(nrow(pos) * 2)
+make_model_matrix <- function(x, label = NA) {
+  x <- data.matrix(x)
+  if (!is.na(label)) {
+    y <- as.numeric(as.character(label))
+    X <- xgb.DMatrix(x, label = y)
+  } else {
+    X <- xgb.DMatrix(x)
+  }
+  return(X)
+}
 
-train <- rbind(pos, neg)
+remove_cols <- . %>%
+  dplyr::select(-user_id, -set, -product_id, -aisle_id, 
+                -department_id, -reordered, -order_id)
 
-x <-  data.matrix(train %>%
-                    dplyr::select(-user_id, -set, -product_id, -aisle_id, 
-                                  -department_id, -reordered, -order_id))
+evalerror <- function(preds, dtrain) {
+  labels <- as.numeric(getinfo(dtrain, 'label'))
+  preds <- as.numeric(preds > .5)
+  tp <- sum(preds[labels == 1] == 1)
+  fp <- sum(preds[labels == 0] == 1)
+  fn <- sum(preds[labels == 1] == 0)
+  
+  precision <- ifelse((tp == 0 & fp == 0), 0, tp / (tp + fp))
+  recall <- ifelse((tp == 0 & fn == 0), 0, tp / (tp + fn))
+  
+  score <- ifelse((precision == 0 & recall == 0), 0, 2 * precision * recall / (precision + recall))
+  return(list(metric = 'f1', value = score))
+}
 
-y <- as.numeric(as.character(train$reordered))
+inds <- caTools::sample.split(Y = model_df$reordered[model_df$set == 'train'],
+                              SplitRatio = .75)
 
-X <- xgb.DMatrix(x, label = y)
+train <- model_df %>% dplyr::filter(set == 'train') %>% dplyr::filter(inds)
+test <- model_df %>% dplyr::filter(set == 'train') %>% dplyr::filter(!inds)
+
+trainx <- make_model_matrix(x = train %>% remove_cols(), label = train$reordered)
+
+weight <- sum(train$reordered == 0) / sum(train$reordered == 1)
 
 params <- list('objective' = 'binary:logistic', 'eta' = .1, 
                'max_depth' = 6, 'min_child_weight' = 10, 'gamma' = .7,
-               'subsample' = .76, 'colsample_bytreee' = .95, 
+               'subsample' = .5, 'scale_pos_weight' = weight,
+               'max_delta_step' = 1, 'booster' = 'gbtree',
                'alpha' = 2e-5, 'lambda' = 10, 'maximize' = TRUE)
 
 # bst <- xgb.cv(data = X, params = params, 
 #               feval = evalerror, nrounds = 20, nfold = 5)
 
-bst <- xgboost(data = X, params = params, 
-               feval = evalerror, nrounds = 10)
+bst <- xgboost(data = trainx, params = params, 
+               feval = evalerror, nrounds = 50)
 
-preds <- predict(bst, X)
+testx <- make_model_matrix(x = test %>% remove_cols(), label = test$reordered)
+preds <- predict(bst, testx)
 
-bst_preds <- train %>%
+bst_preds <- test %>%
   dplyr::mutate(preds = preds) %>%
   dplyr::group_by(order_id) %>%
   dplyr::summarise(products = paste(product_id[preds > .5], collapse = ' ')) %>%
@@ -438,13 +456,12 @@ bst_preds <- train %>%
   dplyr::left_join(dataset %>% dplyr::select(order_id, actual_products),
                    by = 'order_id')
 
-mean_f1 <- mean(apply(bst_preds, 1, function(x) f1(x[3], x[2])))
+(mean_f1 <- mean(apply(bst_preds, 1, function(x) f1(x[3], x[2]))))
 
 newx <- data.matrix(
   model_df %>% 
     dplyr::filter(set == 'test') %>% 
-    dplyr::select(-user_id, -set, -product_id, -aisle_id, 
-                  -department_id, -reordered, -order_id)
+    remove_cols()
 )
 
 newx <- xgb.DMatrix(newx)
@@ -453,7 +470,7 @@ preds <- predict(bst, newx)
 bst_preds <- model_df %>%
   dplyr::filter(set == 'test') %>%
   dplyr::select(order_id, product_id) %>%
-  dplyr::mutate(preds = preds > .5) %>%
+  dplyr::mutate(preds = preds > .2) %>%
   dplyr::group_by(order_id) %>%
   dplyr::summarise(products = paste(product_id[preds], collapse = ' ')) %>%
   dplyr::right_join(y = sample_submission %>% dplyr::select(-products),
