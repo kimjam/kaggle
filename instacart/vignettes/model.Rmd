@@ -291,7 +291,7 @@ model_df <- dataset %>%
   tidyr::unnest() %>%
   dplyr::left_join(y = cust_profile %>%
                      dplyr::select(user_id, user_order_freq, cart_size, 
-                                   user_perc_reorder, customer_group),
+                                   user_perc_reorder, user_dow, user_hour),
                    by = 'user_id') %>%
   dplyr::left_join(y = user_prod,
                    by = c('user_id', 'product_id')) %>%
@@ -305,7 +305,6 @@ model_df <- dataset %>%
   # mutate_at with dplyr::ends_with('id') not working?
   dplyr::mutate(reordered = as.factor(reordered),
                 product_id = as.factor(product_id),
-                customer_group = as.factor(customer_group),
                 aisle_id = as.factor(aisle_id),
                 department_id = as.factor(department_id),
                 user_diff_days = days_since_prior_order - user_order_freq,
@@ -412,8 +411,7 @@ train <- rbind(pos, neg)
 
 x <-  data.matrix(train %>%
                     dplyr::select(-user_id, -set, -product_id, -aisle_id, 
-                                  -department_id, -reordered, -order_id,
-                                  -customer_group))
+                                  -department_id, -reordered, -order_id))
 
 y <- as.numeric(as.character(train$reordered))
 
@@ -446,8 +444,7 @@ newx <- data.matrix(
   model_df %>% 
     dplyr::filter(set == 'test') %>% 
     dplyr::select(-user_id, -set, -product_id, -aisle_id, 
-                  -department_id, -reordered, -order_id,
-                  -customer_group)
+                  -department_id, -reordered, -order_id)
 )
 
 newx <- xgb.DMatrix(newx)
