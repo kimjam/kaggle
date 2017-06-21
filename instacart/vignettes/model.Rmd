@@ -34,7 +34,9 @@ f1 <- function (actual, predicted) {
   recall <- ifelse ((tp==0 & fn==0), 0, tp/(tp+fn))
   
   score <- ifelse ((precision==0 & recall==0), 0, 2*precision*recall/(precision+recall))
-  return(score)
+  return(list('precision' = precision,
+              'recall' = recall,
+              'score' = score))
 }
 ```
 
@@ -258,6 +260,12 @@ department_df <- tmp %>%
     department_reordered_perc = sum(reordered) / n()
   )
 
+user_dep <- cust_profile[, c(1, 7:27)] %>% 
+  tidyr::gather(department, user_dep_order_prop, -user_id) %>%
+  dplyr::left_join(y = departments,
+                   by = 'department') %>%
+  dplyr::select(-department)
+
 aisle_df <- tmp %>%
   dplyr::left_join(y = dataset %>%
                      dplyr::select(user_id, set),
@@ -275,9 +283,9 @@ aisle_df <- tmp %>%
 model_df <- dataset %>%
   dplyr::select(user_id, set, product_ids) %>%
   tidyr::unnest() %>%
-  dplyr::left_join(y = cust_profile %>%
-                     dplyr::select(user_id, user_order_freq, cart_size, 
-                                   user_perc_reorder, user_dow, user_hour),
+  dplyr::left_join(y = cust_profile %>% dplyr::select(user_id, user_order_freq,
+                                                      user_dow, user_hour, cart_size,
+                                                      user_perc_reorder),
                    by = 'user_id') %>%
   dplyr::left_join(y = user_prod,
                    by = c('user_id', 'product_id')) %>%
@@ -286,6 +294,7 @@ model_df <- dataset %>%
   dplyr::left_join(y = dependent_info %>% dplyr::select(-eval_set),
                    by = 'user_id') %>%
   dplyr::left_join(y = department_df, by = 'department_id') %>%
+  dplyr::left_join(y = user_dep, by = c('user_id', 'department_id')) %>%
   dplyr::left_join(y = aisle_df, by = 'aisle_id') %>%
   dplyr::left_join(y = prod_df, by = 'product_id') %>%
   # mutate_at with dplyr::ends_with('id') not working?
@@ -299,8 +308,12 @@ model_df <- dataset %>%
                 prod_diff_days = days_since_prior_order - prod_avg_days_reordered,
                 prod_diff_dow = order_dow - prod_dow_reordered, 
                 prod_diff_hour = order_hour_of_day - prod_hour_reordered,
-                department_diff = days_since_prior_order - department_avg_days_reordered,
-                aisle_diff = days_since_prior_order - aisle_avg_days_reordered)
+                user_prod_diff_perc = prod_reordered_perc - user_prod_reordered_perc,
+                user_prod_diff_days = days_since_prior_order - user_prod_avg_days_reordered,
+                user_prod_diff_hours = order_hour_of_day - user_prod_hour_reordered,
+                user_prod_diff_dow = order_dow - user_prod_dow_reordered,
+                department_diff_days = days_since_prior_order - department_avg_days_reordered,
+                aisle_diff_days = days_since_prior_order - aisle_avg_days_reordered)
 ```
 
 ```{r logistic}
@@ -308,14 +321,6 @@ model_df <- dataset %>%
 library(Matrix)
 library(glmnet)
 library(doParallel)
-
-# x <- Matrix::sparse.model.matrix(
-#   reordered ~ ., 
-#   model_df %>% 
-#     dplyr::filter(set == 'train', 
-#                   !is.na(prod_avg_days_reordered)) %>% 
-#     dplyr::select(-user_id, -set, -product_id, -aisle_id, -department_id)
-# )
 
 x <- data.matrix(
   model_df %>% 
@@ -393,21 +398,22 @@ library(caTools)
 #   dplyr::filter(set == 'train',
 #                 reordered == 0) %>%
 #   dplyr::sample_n(nrow(pos) * 2)
+remove_cols <- . %>%
+  dplyr::select(-user_id, -set, -product_id, -aisle_id, 
+                -reordered, -order_id)
 
 make_model_matrix <- function(x, label = NA) {
-  x <- data.matrix(x)
+  xmat <- data.matrix(x %>% remove_cols())
+  # xmat <- data.matrix(x %>% dplyr::select(-department_id))
+  # xmat <- Matrix::cBind(xmat, 
+  #                       Matrix::sparse.model.matrix(~x$department_id - 1))
   if (!is.na(label)) {
-    y <- as.numeric(as.character(label))
-    X <- xgb.DMatrix(x, label = y)
+    X <- xgb.DMatrix(data = xmat, label = as.numeric(as.character(label)))
   } else {
-    X <- xgb.DMatrix(x)
+    X <- xgb.DMatrix(data = xmat)
   }
   return(X)
 }
-
-remove_cols <- . %>%
-  dplyr::select(-user_id, -set, -product_id, -aisle_id, 
-                -department_id, -reordered, -order_id)
 
 evalerror <- function(preds, dtrain) {
   labels <- as.numeric(getinfo(dtrain, 'label'))
@@ -425,13 +431,17 @@ evalerror <- function(preds, dtrain) {
 
 inds <- caTools::sample.split(Y = model_df$reordered[model_df$set == 'train'],
                               SplitRatio = .75)
+train <- model_df %>% 
+    dplyr::filter(set == 'train') %>% 
+    dplyr::filter(inds)
 
-train <- model_df %>% dplyr::filter(set == 'train') %>% dplyr::filter(inds)
-test <- model_df %>% dplyr::filter(set == 'train') %>% dplyr::filter(!inds)
+test <- model_df %>% 
+    dplyr::filter(set == 'train') %>% 
+    dplyr::filter(!inds)
 
-trainx <- make_model_matrix(x = train %>% remove_cols(), label = train$reordered)
+trainx <- make_model_matrix(x = train, label = train$reordered)
 
-weight <- sum(train$reordered == 0) / sum(train$reordered == 1)
+weight <- sum(getinfo(trainx, 'label') == 0) / sum(getinfo(trainx, 'label') == 1)
 
 params <- list('objective' = 'binary:logistic', 'eta' = .1, 
                'max_depth' = 6, 'min_child_weight' = 10, 'gamma' = .7,
@@ -441,11 +451,12 @@ params <- list('objective' = 'binary:logistic', 'eta' = .1,
 
 # bst <- xgb.cv(data = X, params = params, 
 #               feval = evalerror, nrounds = 20, nfold = 5)
-
+gc()
 bst <- xgboost(data = trainx, params = params, 
-               feval = evalerror, nrounds = 50)
+               feval = evalerror, nrounds = 80)
 
-testx <- make_model_matrix(x = test %>% remove_cols(), label = test$reordered)
+gc()
+testx <- make_model_matrix(x = test, label = test$reordered)
 preds <- predict(bst, testx)
 
 bst_preds <- test %>%
@@ -456,7 +467,8 @@ bst_preds <- test %>%
   dplyr::left_join(dataset %>% dplyr::select(order_id, actual_products),
                    by = 'order_id')
 
-(mean_f1 <- mean(apply(bst_preds, 1, function(x) f1(x[3], x[2]))))
+scores <- dplyr::bind_rows(apply(bst_preds, 1, function(x) f1(x[3], x[2])))
+(mean_f1 <- mean(scores$score))
 
 newx <- data.matrix(
   model_df %>% 
@@ -470,7 +482,7 @@ preds <- predict(bst, newx)
 bst_preds <- model_df %>%
   dplyr::filter(set == 'test') %>%
   dplyr::select(order_id, product_id) %>%
-  dplyr::mutate(preds = preds > .2) %>%
+  dplyr::mutate(preds = preds > .5) %>%
   dplyr::group_by(order_id) %>%
   dplyr::summarise(products = paste(product_id[preds], collapse = ' ')) %>%
   dplyr::right_join(y = sample_submission %>% dplyr::select(-products),
