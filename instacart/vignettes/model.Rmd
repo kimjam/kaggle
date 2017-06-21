@@ -426,7 +426,7 @@ params <- list('objective' = 'binary:logistic', 'eta' = .1,
 #               feval = evalerror, nrounds = 20, nfold = 5)
 
 bst <- xgboost(data = X, params = params, 
-               feval = evalerror, nrounds = 20)
+               feval = evalerror, nrounds = 10)
 
 preds <- predict(bst, X)
 
